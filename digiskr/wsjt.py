@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from digiskr.wsprnet import Wsprnet
 from digiskr.parser import LineParser
 import re
@@ -251,15 +251,13 @@ class WsjtParser(LineParser):
 
                 f = int(out["freq"]*1e6)
                 band = freq_to_band(f)
-
-                print( (out["mode"], band) )
-                print( wsjtx_udp_service.in_use.values() )
-                print( (out["mode"], band) not in wsjtx_udp_service.in_use.values() )
+                t = datetime.utcfromtimestamp(out["timestamp"])
+                millis_since_midnight = 1000 * (t.hour * 3600 + t.minute * 60 + t.second)
 
                 if (out["mode"], band) not in wsjtx_udp_service.in_use.values():
                     print("sending status " + out["mode"] + ", " +  band)
                     status = pywsjtx.StatusPacket.Builder(wsjtx_id='DigiSkr-'+band, dial_frequency=f, mode=out["mode"], dx_call='', report='', tx_mode=out["mode"], tx_enabled=0, transmitting=0, decoding=0, rx_df=0, tx_df=0, de_call='KB3WFQ', de_grid='FN20GF', dx_grid='', tx_watchdog=0, sub_mode='', fast_mode=0, special_op_mode=0)
-                    decode = pywsjtx.DecodePacket.Builder(wsjtx_id='DigiSkr-'+band, new_decode=1, millis_since_midnight=out["timestamp"], snr=int(out["db"]), delta_t=0, delta_f=0, mode=out["mode"], message=out["msg"], low_confidence=0)
+                    decode = pywsjtx.DecodePacket.Builder(wsjtx_id='DigiSkr-'+band, new_decode=1, millis_since_midnight=millis_since_midnight, snr=int(out["db"]), delta_t=0, delta_f=0, mode=out["mode"], message=out["msg"], low_confidence=0)
                     wsjtx_udp_service.sock.sendto(status, wsjtx_udp_service.addr_port)
                     wsjtx_udp_service.sock.sendto(decode, wsjtx_udp_service.addr_port)
 
