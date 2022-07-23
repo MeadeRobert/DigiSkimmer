@@ -7,9 +7,76 @@ from digiskr.pskreporter import PskReporter
 from digiskr.base import AudioDecoderProfile
 from digiskr.config import Config
 from abc import ABC, ABCMeta, abstractmethod
-
+import threading
+import sys
 import logging
+import socket
+import struct
 from . import pywsjtx
+
+
+def freq_to_band(f):
+    if f >= 1.8e6 and f <= 2.0e6:
+        return '160m'
+    elif f >= 3.5e6 and f <= 4.0e6:
+        return '80m'
+    elif f >= 5329e3 and f <= 5405:
+        return '60m'
+    elif f >= 7.0e6 and f <= 7.3e6:
+        return '40m'
+    elif f >= 10.1e6 and f <= 10.15e6:
+        return '30m'
+    elif f >= 14.0e6 and f <= 14350e3:
+        return '20m'
+    elif f >= 18068e3 and f <= 18168e3:
+        return '17m'
+    elif f >= 21.0e6 and f <= 21450e3:
+        return '15m'
+    elif f >= 24890 and f <= 24990e3:
+        return '12m'
+    elif f >= 28.0e6 and f <= 29.7e6:
+        return '10m'
+    elif f >= 50e6 and f <= 54e6:
+        return '6m'
+    elif f >= 144e6 and f <= 148e6:
+        return '2m'
+    elif f >= 222e6 and f <= 225e6:
+        return '1.25m'
+    elif f >= 420e6 and f <= 450e6:
+        return '70cm'
+    else:
+        return 'OOB'
+
+class WSJTXUDPService(threading.Thread):
+
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.addr = '224.0.0.1'
+        self.port = 2237
+        self.addr_port = (self.addr,self.port)
+        self.sock.bind(self.addr_port)
+        mreq = struct.pack("4sl", socket.inet_aton(self.addr), socket.INADDR_ANY)
+        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        self.in_use = {}
+
+    def run(self):
+        while True:
+            try:
+                pkt = self.sock.recv(4096)
+                wsjtx_pkt = pywsjtx.WSJTXPacketClassFactory.from_udp_packet(self.addr_port, pkt)
+                #print(wsjtx_pkt)
+                if wsjtx_pkt.pkt_type == pywsjtx.StatusPacket.TYPE_VALUE and 'DigiSkr' not in wsjtx_pkt.wsjtx_id:
+                    #print(wsjtx_pkt.wsjtx_id)
+                    self.in_use[wsjtx_pkt.wsjtx_id] = (wsjtx_pkt.mode, freq_to_band(wsjtx_pkt.dial_frequency))
+                #print(self.in_use)
+            except Exception as e:
+                print(e)
+                print(pkt)
+
+wsjtx_udp_service = WSJTXUDPService()
+wsjtx_udp_service.start()
 
 class WsjtProfile(AudioDecoderProfile, metaclass=ABCMeta):
     def decoding_depth(self, mode):
@@ -155,48 +222,6 @@ class Fst4wProfile(WsjtProfile):
     def decoder_commandline(self, file):
         return ["jt9", "--fst4w", "-p", str(self.getInterval()), "-F", str(100), "-d", str(self.decoding_depth(self.getMode())), file]
 
-import socket
-import struct
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-addr = '224.0.0.1'
-port = 2237
-addr_port = (addr,port)
-sock.bind(addr_port)
-mreq = struct.pack("4sl", socket.inet_aton(addr), socket.INADDR_ANY)
-sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-
-def freq_to_band(f):
-    if f >= 1.8e6 and f <= 2.0e6:
-        return '160m'
-    elif f >= 3.5e6 and f <= 4.0e6:
-        return '80m'
-    elif f >= 5329e3 and f <= 5405:
-        return '60m'
-    elif f >= 7.0e6 and f <= 7.3e6:
-        return '40m'
-    elif f >= 10.1e6 and f <= 10.15e6:
-        return '30m'
-    elif f >= 14.0e6 and f <= 14350e3:
-        return '20m'
-    elif f >= 18068e3 and f <= 18168e3:
-        return '17m'
-    elif f >= 21.0e6 and f <= 21450e3:
-        return '15m'
-    elif f >= 24890 and f <= 24990e3:
-        return '12m'
-    elif f >= 28.0e6 and f <= 29.7e6:
-        return '10m'
-    elif f >= 50e6 and f <= 54e6:
-        return '6m'
-    elif f >= 144e6 and f <= 148e6:
-        return '2m'
-    elif f >= 222e6 and f <= 225e6:
-        return '1.25m'
-    elif f >= 420e6 and f <= 450e6:
-        return '70cm'
-    else:
-        return 'OOB'
 class WsjtParser(LineParser):
 
     def parse(self, messages):
@@ -227,10 +252,16 @@ class WsjtParser(LineParser):
                 f = int(out["freq"]*1e6)
                 band = freq_to_band(f)
 
-                status = pywsjtx.StatusPacket.Builder(wsjtx_id='DigiSkr-'+band, dial_frequency=f, mode=out["mode"], dx_call='', report='', tx_mode=out["mode"], tx_enabled=0, transmitting=0, decoding=0, rx_df=0, tx_df=0, de_call='KB3WFQ', de_grid='FN20GF', dx_grid='', tx_watchdog=0, sub_mode='', fast_mode=0, special_op_mode='Default')
-                decode = pywsjtx.DecodePacket.Builder(wsjtx_id='DigiSkr-'+band, new_decode=1, millis_since_midnight=out["timestamp"], snr=int(out["db"]), delta_t=0, delta_f=0, mode=out["mode"], message=out["msg"], low_confidence=0)
-                sock.sendto(status, addr_port)
-                sock.sendto(decode, addr_port)
+                print( (out["mode"], band) )
+                print( wsjtx_udp_service.in_use.values() )
+                print( (out["mode"], band) not in wsjtx_udp_service.in_use.values() )
+
+                if (out["mode"], band) not in wsjtx_udp_service.in_use.values():
+                    print("sending status " + out["mode"] + ", " +  band)
+                    status = pywsjtx.StatusPacket.Builder(wsjtx_id='DigiSkr-'+band, dial_frequency=f, mode=out["mode"], dx_call='', report='', tx_mode=out["mode"], tx_enabled=0, transmitting=0, decoding=0, rx_df=0, tx_df=0, de_call='KB3WFQ', de_grid='FN20GF', dx_grid='', tx_watchdog=0, sub_mode='', fast_mode=0, special_op_mode=0)
+                    decode = pywsjtx.DecodePacket.Builder(wsjtx_id='DigiSkr-'+band, new_decode=1, millis_since_midnight=out["timestamp"], snr=int(out["db"]), delta_t=0, delta_f=0, mode=out["mode"], message=out["msg"], low_confidence=0)
+                    wsjtx_udp_service.sock.sendto(status, wsjtx_udp_service.addr_port)
+                    wsjtx_udp_service.sock.sendto(decode, wsjtx_udp_service.addr_port)
 
                 if "mode" in out:
                     if "callsign" in out and "locator" in out:
