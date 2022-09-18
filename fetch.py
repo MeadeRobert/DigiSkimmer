@@ -27,7 +27,7 @@ _conf = Config.get()
 _run_event = threading.Event()
 _run_event.set()
 _sr_tasks = []
-threading.currentThread().setName("main")
+threading.current_thread().setName("main")
 
 
 def setup_logger():
@@ -133,14 +133,14 @@ def cleanup():
     Wsprnet.stop()
     [w.stop() for w in DecoderQueue.instance().workers]
     [r.stop() for r in _sr_tasks]
-    [t.join() for t in threading.enumerate() if t is not threading.currentThread()]
+    [t.join() for t in threading.enumerate() if t is not threading.current_thread()]
 
 
 def remove_thread(snd, r):
     r.stop()
     if snd.__contains__(r):
         snd.remove(r)
-        logging.info("Task #%s removed", r.getName())
+        logging.info("Task \#%s removed", r.getName())
 
 
 def match_schedule(schedules):
@@ -197,7 +197,7 @@ def main():
                     for band in bands:
                         exsit_task = False
                         for r in _sr_tasks:
-                            if r.getName() == "%s-%s" % (st, band):
+                            if r.name == "%s-%s" % (st, band):
                                 exsit_task = True
                                 break
                         if not exsit_task:

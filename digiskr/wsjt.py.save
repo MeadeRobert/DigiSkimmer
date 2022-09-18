@@ -65,9 +65,19 @@ class WSJTXUDPService(threading.Thread):
         while True:
             try:
                 pkt = self.sock.recvfrom(4096)
+                print(pkt[1][0])
                 wsjtx_pkt = pywsjtx.WSJTXPacketClassFactory.from_udp_packet(self.addr_port, pkt[0])
+                #print(wsjtx_pkt)
                 if wsjtx_pkt.pkt_type == pywsjtx.StatusPacket.TYPE_VALUE and 'DigiSkr' not in wsjtx_pkt.wsjtx_id:
+                    #print(wsjtx_pkt.wsjtx_id)
                     self.in_use[wsjtx_pkt.wsjtx_id] = (wsjtx_pkt.mode, freq_to_band(wsjtx_pkt.dial_frequency))
+                #print(self.in_use['WSJT-X - 7300'][1])
+                
+                #elif pkt[1][0] == '192.168.1.187' and 'DigiSkr' in wsjtx_pkt.wsjtx_id: #freq_to_band(wsjtx_pkt.dial_freq) != self.in_use['WSJT-X - 7300'][1]:
+                #    print("forward command")
+                    #status = pywsjtx.StatusPacket.Builder(wsjtx_id='WSJT-X - 7300', dial_frequency=wsjtx_pkt.dial_frequency, mode=wsjtx_pkt.mode, dx_call=wsjtx_pkt.dx_call, report=wsjtx_pkt.report, tx_mode=wsjtx_pkt.tx_mode, tx_enabled=wsjtx_pkt.tx_enabled, transmitting=wsjtx_pkt.transmitting, decoding=wsjtx_pkt.decoding, rx_df=wsjtx_pkt.rx_df, tx_df=wsjtx_pkt.tx_df, de_call=wsjtx_pkt.de_call, de_grid=wsjtx_pkt.de_grid, dx_grid=wsjtx_pkt.dx_grid, tx_watchdog=wsjtx_pkt.tx_watchdog, sub_mode=wsjtx_pkt.sub_mode, fast_mode=wsjtx_pkt.fast_mode, special_op_mode=wsjtx_pkt.special_op_mode)
+                    #self.sock.sendto(status, self.addr_port)
+                #print(self.in_use)
             except Exception as e:
                 print(e)
                 print(pkt)
@@ -253,8 +263,8 @@ class WsjtParser(LineParser):
 
                 if (out["mode"], band) not in wsjtx_udp_service.in_use.values():
                     print("sending status " + out["mode"] + ", " +  band)
-                    heartbeat = pywsjtx.HeartBeatPacket.Builder(wsjtx_id='DigiSkr-'+band,max_schema=3,version='2.5.4',revision='d28164')
-                    status = pywsjtx.StatusPacket.Builder(wsjtx_id='DigiSkr-'+band, dial_frequency=f, mode=out["mode"], dx_call='', report='', tx_mode=out["mode"], tx_enabled=0, transmitting=0, decoding=0, rx_df=0, tx_df=0, de_call='KB3WFQ', de_grid='FN20GF', dx_grid='', tx_watchdog=0, sub_mode=b'', fast_mode=0, special_op_mode=0, freq_tolerance=-1, tr_period=-1, config_name='Default', tx_message='')
+                    heartbeat = pywsjtx.HeartBeatPacket.Builder(wsjtx_id='DigiSkr-'+band)
+                    status = pywsjtx.StatusPacket.Builder(wsjtx_id='DigiSkr-'+band, dial_frequency=f, mode=out["mode"], dx_call='', report='', tx_mode=out["mode"], tx_enabled=0, transmitting=0, decoding=0, rx_df=0, tx_df=0, de_call='KB3WFQ', de_grid='FN20GF', dx_grid='', tx_watchdog=0, sub_mode='', fast_mode=0, special_op_mode=0)
                     decode = pywsjtx.DecodePacket.Builder(wsjtx_id='DigiSkr-'+band, new_decode=1, millis_since_midnight=millis_since_midnight, snr=int(out["db"]), delta_t=0, delta_f=0, mode=out["mode"], message=out["msg"], low_confidence=0)
                     wsjtx_udp_service.sock.sendto(heartbeat, wsjtx_udp_service.addr_port)
                     wsjtx_udp_service.sock.sendto(status, wsjtx_udp_service.addr_port)
