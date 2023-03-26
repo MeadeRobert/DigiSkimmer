@@ -24,7 +24,6 @@ BANDS = {  # Freq in MHz
     'FST4W': {'2190': 0.136000, '630': 0.474200, '160': 1.836800},
 }
 
-
 class ConfigNotFoundException(Exception):
     pass
 

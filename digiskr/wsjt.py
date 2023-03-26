@@ -13,7 +13,7 @@ import logging
 import socket
 import struct
 from . import pywsjtx
-
+import queue
 
 def freq_to_band(f):
     if f >= 1.8e6 and f <= 2.0e6:
@@ -51,26 +51,41 @@ class WSJTXUDPService(threading.Thread):
 
     def __init__(self):
         threading.Thread.__init__(self)
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._q = queue.Queue()
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.addr = '224.0.0.1'
         self.port = 2237
         self.addr_port = (self.addr,self.port)
-        self.sock.bind(self.addr_port)
+        self._sock.bind(self.addr_port)
         mreq = struct.pack("4sl", socket.inet_aton(self.addr), socket.INADDR_ANY)
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        self._sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         self.in_use = {}
+
+    def send(self, data):
+        #self.lock.acquire()
+        self._q.put(data)
+        #self.sock.sendto(data, self.addr_port)
+        #self.lock.release()
+
+    def process_pkt(self):
+        pkt = self._sock.recvfrom(4096)                
+        wsjtx_pkt = pywsjtx.WSJTXPacketClassFactory.from_udp_packet(self.addr_port, pkt[0])
+        if wsjtx_pkt.pkt_type == pywsjtx.StatusPacket.TYPE_VALUE and 'DigiSkr' not in wsjtx_pkt.wsjtx_id:
+            self.in_use[wsjtx_pkt.wsjtx_id] = (wsjtx_pkt.mode, freq_to_band(wsjtx_pkt.dial_frequency)) 
 
     def run(self):
         while True:
             try:
-                pkt = self.sock.recvfrom(4096)
-                wsjtx_pkt = pywsjtx.WSJTXPacketClassFactory.from_udp_packet(self.addr_port, pkt[0])
-                if wsjtx_pkt.pkt_type == pywsjtx.StatusPacket.TYPE_VALUE and 'DigiSkr' not in wsjtx_pkt.wsjtx_id:
-                    self.in_use[wsjtx_pkt.wsjtx_id] = (wsjtx_pkt.mode, freq_to_band(wsjtx_pkt.dial_frequency))
+                self.process_pkt()
+                while ~self._q.empty():
+                    data = self._q.get()
+                    self._sock.sendto(data, self.addr_port)
+                    self.process_pkt()
+            except socket.timeout:
+                logging.warning("Socket Receive Timeout - Are Other Multicast Network Users Running?")
             except Exception as e:
-                print(e)
-                print(pkt)
+                logging.error(e)
 
 wsjtx_udp_service = WSJTXUDPService()
 wsjtx_udp_service.start()
@@ -252,12 +267,13 @@ class WsjtParser(LineParser):
                 millis_since_midnight = 1000 * (t.hour * 3600 + t.minute * 60 + t.second)
 
                 if (out["mode"], band) not in wsjtx_udp_service.in_use.values():
-                    print("sending status " + out["mode"] + ", " +  band)
+                    logging.info("Multicast WSJTX Protocol Users: " + wsjtx_udp_service.in_use.__str__())
+                    logging.info("Sending Status/Decode for " + out["mode"] + " / " +  band)
                     #heartbeat = pywsjtx.HeartBeatPacket.Builder(wsjtx_id='DigiSkr-'+band,max_schema=3,version='2.5.4',revision='d28164')
                     status = pywsjtx.StatusPacket.Builder(wsjtx_id='DigiSkr-'+band, dial_frequency=f, mode=out["mode"], dx_call='', report='', tx_mode=out["mode"], tx_enabled=0, transmitting=0, decoding=0, rx_df=0, tx_df=0, de_call='KB3WFQ', de_grid='FN20GF', dx_grid='', tx_watchdog=0, sub_mode=b'', fast_mode=0, special_op_mode=0, freq_tolerance=-1, tr_period=-1, config_name='Default', tx_message='')
-                    decode = pywsjtx.DecodePacket.Builder(wsjtx_id='DigiSkr-'+band, new_decode=1, millis_since_midnight=millis_since_midnight, snr=int(out["db"]), delta_t=0, delta_f=0, mode=out["mode"], message=out["msg"], low_confidence=0)
-                    wsjtx_udp_service.sock.sendto(status, wsjtx_udp_service.addr_port)
-                    wsjtx_udp_service.sock.sendto(decode, wsjtx_udp_service.addr_port)
+                    decode = pywsjtx.DecodePacket.Builder(wsjtx_id='DigiSkr-'+band, new_decode=1, millis_since_midnight=millis_since_midnight, snr=int(out["db"]), delta_t=out["dt"], delta_f=0, mode=out["mode"], message=out["msg"], low_confidence=0)
+                    wsjtx_udp_service.send(status)
+                    wsjtx_udp_service.send(decode)
 
                 if "mode" in out:
                     if "callsign" in out and "locator" in out:
